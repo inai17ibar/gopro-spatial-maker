@@ -30,9 +30,11 @@ enum AudioSyncEstimator {
 
         let n = nextPowerOfTwo(a.count + b.count)
         let log2n = vDSP_Length(log2(Double(n)))
-        guard let fft = vDSP.FFT(log2n: log2n, radix: .radix2, ofType: DSPSplitComplex.self) else {
+        // Complex (zop) FFT so the whole signal is one plane; the real-FFT wrapper expects even/odd packing.
+        guard let setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2)) else {
             throw SpatialMakerError.unsupported("FFTの初期化に失敗しました")
         }
+        defer { vDSP_destroy_fftsetup(setup) }
 
         // 12 zeroed scratch planes: a, b (time), A, B (freq), A·conj(B), and the correlation result.
         let planeCount = 12
@@ -44,27 +46,26 @@ enum AudioSyncEstimator {
         a.withUnsafeBufferPointer { plane(0).update(from: $0.baseAddress!, count: a.count) }
         b.withUnsafeBufferPointer { plane(2).update(from: $0.baseAddress!, count: b.count) }
 
-        let aTime = DSPSplitComplex(realp: plane(0), imagp: plane(1))
-        let bTime = DSPSplitComplex(realp: plane(2), imagp: plane(3))
+        var aTime = DSPSplitComplex(realp: plane(0), imagp: plane(1))
+        var bTime = DSPSplitComplex(realp: plane(2), imagp: plane(3))
         var aFreq = DSPSplitComplex(realp: plane(4), imagp: plane(5))
         var bFreq = DSPSplitComplex(realp: plane(6), imagp: plane(7))
         var product = DSPSplitComplex(realp: plane(8), imagp: plane(9))
         var correlation = DSPSplitComplex(realp: plane(10), imagp: plane(11))
 
-        fft.forward(input: aTime, output: &aFreq)
-        fft.forward(input: bTime, output: &bFreq)
-        // product = A · conj(B)
+        vDSP_fft_zop(setup, &aTime, 1, &aFreq, 1, log2n, FFTDirection(kFFTDirection_Forward))
+        vDSP_fft_zop(setup, &bTime, 1, &bFreq, 1, log2n, FFTDirection(kFFTDirection_Forward))
+        // product = conj(A) · B
         vDSP_zvmul(&aFreq, 1, &bFreq, 1, &product, 1, vDSP_Length(n), -1)
-        fft.inverse(input: product, output: &correlation)
+        vDSP_fft_zop(setup, &product, 1, &correlation, 1, log2n, FFTDirection(kFFTDirection_Inverse))
 
-        // c[k] = Σ a[n + k] · b[n]; with b[n] = a[n − d] the peak sits at k = −d.
+        // c[k] = Σ a[n] · b[n + k]; with b[n] = a[n − d] the peak sits at k = d.
         var peakIndex: vDSP_Length = 0
         var peakValue: Float = 0
         vDSP_maxvi(plane(10), 1, &peakValue, &peakIndex, vDSP_Length(n))
 
-        var k = Int(peakIndex)
-        if k > n / 2 { k -= n }
-        let d = -k
+        var d = Int(peakIndex)
+        if d > n / 2 { d -= n }
 
         let energyA = vDSP.sumOfSquares(a)
         let energyB = vDSP.sumOfSquares(b)

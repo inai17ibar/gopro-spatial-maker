@@ -27,7 +27,15 @@ enum TimecodeReader {
         }
         defer { reader.cancelReading() }
 
-        guard let sample = output.copyNextSampleBuffer(),
+        // The reader may emit data-less marker buffers (e.g. edit boundaries) before the first real sample.
+        var firstSample: CMSampleBuffer?
+        while let candidate = output.copyNextSampleBuffer() {
+            if CMSampleBufferGetNumSamples(candidate) > 0, CMSampleBufferGetDataBuffer(candidate) != nil {
+                firstSample = candidate
+                break
+            }
+        }
+        guard let sample = firstSample,
               let formatDescription = CMSampleBufferGetFormatDescription(sample),
               let blockBuffer = CMSampleBufferGetDataBuffer(sample) else {
             return nil

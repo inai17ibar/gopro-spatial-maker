@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -9,12 +9,15 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "GoProSpatialMaker",
-            path: "Sources/GoProSpatialMaker"
+            path: "Sources/GoProSpatialMaker",
+            exclude: ["Info.plist", "GoProSpatialMaker.entitlements"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
             name: "GoProSpatialMakerTests",
             dependencies: ["GoProSpatialMaker"],
-            path: "Tests/GoProSpatialMakerTests"
+            path: "Tests/GoProSpatialMakerTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

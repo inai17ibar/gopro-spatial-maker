@@ -136,6 +136,7 @@ enum SpatialVideoExporter {
 
         // MARK: Frame loop
         var frameIndex = 0
+        var audioFinished = audioInput == nil
         var lastReport = Date.distantPast
         while frameIndex < totalFrames {
             try Task.checkCancellation()
@@ -166,17 +167,29 @@ enum SpatialVideoExporter {
                 CMTaggedBuffer(tags: [.videoLayerID(1), .stereoView(.rightEye)], pixelBuffer: rightBuffer)
             ]
 
+            // The writer interleaves tracks and stops accepting video while audio lags, so feed audio
+            // whenever the video input is not ready instead of waiting on it blindly.
             while !videoInput.isReadyForMoreMediaData {
                 try Task.checkCancellation()
-                try await Task.sleep(nanoseconds: 2_000_000)
+                try checkWriter(writer)
+                if let audioInput, let audioCursor, !audioFinished, audioInput.isReadyForMoreMediaData {
+                    if let sample = audioCursor.pop() {
+                        guard audioInput.append(sample) else { try checkWriter(writer); break }
+                    } else {
+                        audioInput.markAsFinished()
+                        audioFinished = true
+                    }
+                } else {
+                    try await Task.sleep(nanoseconds: 2_000_000)
+                }
             }
             let presentationTime = CMTimeAdd(sessionStart, CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex)))
             guard adaptor.appendTaggedBuffers(taggedBuffers, withPresentationTime: presentationTime) else {
                 throw SpatialMakerError.writerFailed(writer.error?.localizedDescription ?? "フレームの追加に失敗しました")
             }
 
-            if let audioInput, let audioCursor {
-                try await drainAudio(cursor: audioCursor, input: audioInput, upTo: presentationTime)
+            if let audioInput, let audioCursor, !audioFinished {
+                try await drainAudio(cursor: audioCursor, input: audioInput, writer: writer, upTo: presentationTime)
             }
 
             frameIndex += 1
@@ -189,8 +202,8 @@ enum SpatialVideoExporter {
         }
 
         videoInput.markAsFinished()
-        if let audioInput, let audioCursor {
-            try await drainAudio(cursor: audioCursor, input: audioInput, upTo: nil)
+        if let audioInput, let audioCursor, !audioFinished {
+            try await drainAudio(cursor: audioCursor, input: audioInput, writer: writer, upTo: nil)
             audioInput.markAsFinished()
         }
 
@@ -212,16 +225,25 @@ enum SpatialVideoExporter {
         return buffer
     }
 
-    /// Appends audio samples whose timestamp is at or before `time` (all remaining samples when nil).
-    private static func drainAudio(cursor: AudioSampleCursor, input: AVAssetWriterInput, upTo time: CMTime?) async throws {
+    private static func checkWriter(_ writer: AVAssetWriter) throws {
+        if writer.status == .failed {
+            throw SpatialMakerError.writerFailed(writer.error?.localizedDescription ?? "AVAssetWriter failed")
+        }
+    }
+
+    /// Appends audio samples whose timestamp is at or before `time` (all remaining samples when nil),
+    /// stopping early if the writer is not ready for more audio yet.
+    private static func drainAudio(cursor: AudioSampleCursor, input: AVAssetWriterInput, writer: AVAssetWriter, upTo time: CMTime?) async throws {
         while let next = cursor.peek() {
             if let time, CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(next), time) > 0 { return }
             while !input.isReadyForMoreMediaData {
                 try Task.checkCancellation()
+                try checkWriter(writer)
+                if time != nil { return }
                 try await Task.sleep(nanoseconds: 2_000_000)
             }
             _ = cursor.pop()
-            if !input.append(next) { return }
+            if !input.append(next) { try checkWriter(writer); return }
         }
     }
 }

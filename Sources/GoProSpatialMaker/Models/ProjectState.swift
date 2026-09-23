@@ -74,9 +74,19 @@ final class ProjectState: ObservableObject {
 
     // MARK: Loading
 
+    /// URLs from the open panel / drag-and-drop are security-scoped under the App Sandbox; access must stay
+    /// open while the clip is loaded because preview and export read the file repeatedly.
+    private var scopedAccess: [Eye: URL] = [:]
+
+    private func endScopedAccess(for eye: Eye) {
+        scopedAccess.removeValue(forKey: eye)?.stopAccessingSecurityScopedResource()
+    }
+
     func load(url: URL, into eye: Eye) {
         Task {
             do {
+                endScopedAccess(for: eye)
+                if url.startAccessingSecurityScopedResource() { scopedAccess[eye] = url }
                 let source = try await VideoSource.load(url: url)
                 switch eye {
                 case .left: left = source
@@ -92,6 +102,7 @@ final class ProjectState: ObservableObject {
     }
 
     func clear(eye: Eye) {
+        endScopedAccess(for: eye)
         switch eye {
         case .left: left = nil
         case .right: right = nil
@@ -180,8 +191,8 @@ final class ProjectState: ObservableObject {
         )
         exportTask = Task.detached(priority: .userInitiated) { [weak self] in
             do {
-                try await SpatialVideoExporter.run(job: job) { progress, message in
-                    Task { @MainActor [weak self] in
+                try await SpatialVideoExporter.run(job: job) { [weak self] progress, message in
+                    Task { @MainActor in
                         self?.exportPhase = .running(progress: progress, message: message)
                     }
                 }
