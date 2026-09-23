@@ -15,7 +15,7 @@ targets:
     sources:
       - path: Sources/GoProSpatialMaker
     info:
-      path: Sources/GoProSpatialMaker/Info.plist
+      path: Support/Info.plist
       properties:
         CFBundleName: GoPro Spatial Maker
         CFBundleDisplayName: GoPro Spatial Maker
@@ -24,7 +24,7 @@ targets:
         LSMinimumSystemVersion: "15.0"
         NSHighResolutionCapable: true
     entitlements:
-      path: Sources/GoProSpatialMaker/GoProSpatialMaker.entitlements
+      path: Support/GoProSpatialMaker.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true

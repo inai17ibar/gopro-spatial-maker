@@ -10,7 +10,6 @@ let package = Package(
         .executableTarget(
             name: "GoProSpatialMaker",
             path: "Sources/GoProSpatialMaker",
-            exclude: ["Info.plist", "GoProSpatialMaker.entitlements"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
